@@ -495,7 +495,14 @@ def env_from_checkpoint(ckpt_path=None, ckpt_dict=None, env_name=None, render=Fa
     env_meta = ckpt_dict["env_metadata"]
     shape_meta = ckpt_dict["shape_metadata"]
 
+    DEOXYS_ENV_INFO = {
+        "env_name": "EnvRealDeoxys",
+        "type": 4,
+        "env_kwargs": {}
+    }
+
     # create env from saved metadata
+    env_meta.update(DEOXYS_ENV_INFO)
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta, 
         render=render, 

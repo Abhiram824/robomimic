@@ -628,7 +628,10 @@ class RolloutPolicy(object):
         self.obs_normalization_stats = obs_normalization_stats
         self.action_normalization_stats = action_normalization_stats
         self._ep_lang_emb = None
-        self.lang_encoder = lang_encoder
+        if lang_encoder is not None:
+            self.lang_encoder = lang_encoder
+        else:
+            self.lang_encoder = LangUtils.LangEncoder(device="cpu")
 
     def start_episode(self, lang=None):
         """
@@ -652,6 +655,7 @@ class RolloutPolicy(object):
         if self.obs_normalization_stats is not None:
             ob = ObsUtils.normalize_dict(ob, obs_normalization_stats=self.obs_normalization_stats)
         assert batched is False
+        assert self._ep_lang_emb is not None, "language conditioned task"
         if self._ep_lang_emb is not None:
             if len(ob["robot0_eef_pos"].shape) == 1:
                 ob["lang_emb"] = self._ep_lang_emb
