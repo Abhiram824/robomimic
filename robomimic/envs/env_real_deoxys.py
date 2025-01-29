@@ -26,22 +26,24 @@ from deoxys.utils.input_utils import input2action
 from deoxys.utils.io_devices import SpaceMouse
 from deoxys.utils.log_utils import get_deoxys_example_logger
 import cv2
+from robomimic.utils.lang_utils import LangEncoder
+from robomimic.macros import LANG_EMB_KEY
 
 
 def zed_image_transform_fn(image):
     assert len(image.shape) == 3, "expected image to have 3 dimensions, got {}".format(len(image.shape))
     height, width = image.shape[:2]
-    new_width = 720
+    new_width = 1080
     x_start = (width - new_width) // 2
     image = image[:, x_start:x_start + new_width]
-    image = cv2.resize(image, (128,128)).astype(np.uint8)
+    image = cv2.resize(image, (170,128)).astype(np.uint8)
     return image
 
 def rs_image_transform_fn(image):
     assert len(image.shape) == 3, "expected image to have 3 dimensions, got {}".format(len(image.shape))
     # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    image = cv2.resize(image, (128,128)).astype(np.uint8)
+    image = cv2.resize(image, (170,128)).astype(np.uint8)
     return image
 
 def get_eef_pos(eef_state):
@@ -53,7 +55,7 @@ def get_eef_quat(eef_state):
     return T.mat2quat(O_T_EE[:3, :3])
 
 def get_gripper_pos(gripper_state):
-    return gripper_state[..., np.newaxis]
+    return np.array([gripper_state/2, -gripper_state/2])
 
 CONVERSION_MAP = {
     "obs/robot0_agentview_right_image": {
@@ -71,12 +73,12 @@ CONVERSION_MAP = {
         "transform": rs_image_transform_fn,
         "key": "camera_rs_0"
     },
-    "obs/robot0_eef_pos": {
+    "obs/robot0_base_to_eef_pos": {
         "filename": "testing_demo_ee_states.npz",
         "transform": get_eef_pos,
         "key": "ee_states"
     },
-    "obs/robot0_eef_quat": {
+    "obs/robot0_base_to_eef_quat": {
         "filename": "testing_demo_ee_states.npz",
         "transform": get_eef_quat,
         "key": "ee_states"
@@ -98,6 +100,10 @@ CONVERSION_MAP = {
     }
 }
 
+# OBJ = "bowl"
+# LANG_TEMPLATE = "pick the {} from the counter and place it in the sink"
+# LANG = LANG_TEMPLATE.format(OBJ)
+LANG = "open the cabinet door"
 
 class EnvRealDeoxys(EnvBase):
     """
@@ -138,6 +144,7 @@ class EnvRealDeoxys(EnvBase):
             robot_params (dict): dictionary of robot-specific parameters
         """
         self._name = env_name
+        np.set_printoptions(precision=4, suppress=True)
         # self.device = SpaceMouse(vendor_id=vendor_id, product_id=product_id)
         self.interface_cfg = interface_cfg
         self.robot_interface = FrankaInterface(interface_cfg)
@@ -150,10 +157,17 @@ class EnvRealDeoxys(EnvBase):
         self.controller_cfg = YamlConfig(controller_cfg).as_easydict()
         self.controller_type = controller_type
         self.postprocess_visual_obs = postprocess_visual_obs
+        self.lang_emb = None if LANG is None else LangEncoder("cpu").get_lang_emb(LANG).numpy()
     
     def step(self, action):
         if not( np.all(action <= 1) and np.all(action >= -1)):
             action = np.clip(action, -1, 1)
+        
+        if action.shape[0] > 7:
+            action = action[:7]
+
+        if LANG is not None:
+            print("Running task with language: ", LANG)
 
         self.robot_interface.control(
             controller_type=self.controller_type,
@@ -244,11 +258,17 @@ class EnvRealDeoxys(EnvBase):
                     ret[k] = ObsUtils.process_obs(obs=obs[k], obs_key=k)
             else:
                 ret[k] = obs[k]
+        
+        if self.lang_emb is not None:
+            ret[LANG_EMB_KEY] = self.lang_emb
 
         return ret
     
     def render(self, mode="human", height=None, width=None, camera_name=None):
         image = self.cr_interfaces[camera_name].get_img()["color"]
+        if camera_name == "rs_0":
+            image = cv2.resize(image, (height,width)).astype(np.uint8)
+            return image
         _, w = image.shape[:2]
         new_width = 720
         x_start = (w - new_width) // 2

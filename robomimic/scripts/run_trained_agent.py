@@ -97,7 +97,7 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
     assert isinstance(policy, RolloutPolicy)
     assert not (render and (video_writer is not None))
 
-    policy.start_episode(lang="pick the can from the counter and place it in the sink")
+    policy.start_episode(lang="pick the orange from the counter and place it in the sink")
     obs = env.reset()
     # state_dict = env.get_state()
 

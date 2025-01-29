@@ -657,10 +657,10 @@ class RolloutPolicy(object):
         assert batched is False
         assert self._ep_lang_emb is not None, "language conditioned task"
         if self._ep_lang_emb is not None:
-            if len(ob["robot0_eef_pos"].shape) == 1:
+            if len(ob["robot0_base_to_eef_pos"].shape) == 1:
                 ob["lang_emb"] = self._ep_lang_emb
             else:
-                ob["lang_emb"] = np.repeat(self._ep_lang_emb[np.newaxis], len(ob["robot0_eef_pos"]), axis=0)
+                ob["lang_emb"] = np.repeat(self._ep_lang_emb[np.newaxis], len(ob["robot0_base_to_eef_pos"]), axis=0)
         ob = TensorUtils.to_tensor(ob)
         if not batched:
             ob = TensorUtils.to_batch(ob)
