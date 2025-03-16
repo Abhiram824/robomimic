@@ -47,6 +47,7 @@ import multiprocessing
 import queue
 import time
 import traceback
+import mimicgen
 
 import robomimic.utils.tensor_utils as TensorUtils
 import robomimic.utils.file_utils as FileUtils
@@ -55,8 +56,29 @@ from robomimic.envs.env_base import EnvBase
 
 from robomimic.scripts.conversion.extract_action_dict import extract_action_dict
 from robomimic.scripts.filter_dataset_size import filter_dataset_size
+import xml.etree.ElementTree as ET
 
 """ End of dataset_states_to_args copy over """
+
+def postprocess_model_xml(xml_str):
+    root = ET.fromstring(xml_str)
+    # <camera name="robot0_eye_in_hand" pos="0.05 -0.00575 0.0749" quat="0.0650612 0.715034 0.692262 0.0725755" fovy="97"/>
+    eye_in_hand_cam = root.find(".//camera[@name='robot0_eye_in_hand']")
+    eye_in_hand_cam.set("pos", "0.05 -0.00575 0.0749")
+    eye_in_hand_cam.set("quat", "0.0650612 0.715034 0.692262 0.0725755")
+    eye_in_hand_cam.set("fovy", "97")
+
+    # <camera name="robot0_agentview" pos="1.1503 0.0737 0.8295" quat="0.657089 0.262395 0.269195 0.653389"/>
+    # make new element for agentview camera
+    agentview_cam = ET.Element("camera")
+    agentview_cam.set("name", "robot0_agentview")
+    agentview_cam.set("pos", "1.1503 0.0737 0.8295")
+    agentview_cam.set("quat", "0.657089 0.262395 0.269195 0.653389")
+
+    robot0_base= root.find(".//body[@name='robot0_base']")
+    robot0_base.append(agentview_cam)
+
+    return ET.tostring(root, encoding="unicode")
 
 def extract_trajectory(
     env, 
@@ -86,10 +108,10 @@ def extract_trajectory(
     env.reset()
     obs = env.reset_to(initial_state)
 
-    ep_meta = json.loads(initial_state["ep_meta"])
+    # ep_meta = json.loads(initial_state["ep_meta"])
     # hack: add the cam configs in, since it's been modified
-    ep_meta["cam_configs"] = deepcopy(env.env._cam_configs)
-    initial_state["ep_meta"] = json.dumps(ep_meta, indent=4)
+    # ep_meta["cam_configs"] = deepcopy(env.env._cam_configs)
+    # initial_state["ep_meta"] = json.dumps(ep_meta, indent=4)
 
     traj = dict(
         obs=[], 
@@ -97,7 +119,7 @@ def extract_trajectory(
         rewards=[], 
         dones=[], 
         actions=np.array(actions),
-        actions_abs=[],
+        # actions_abs=[],
         states=np.array(states), 
         initial_state_dict=initial_state,
         datagen_info=[],
@@ -129,14 +151,14 @@ def extract_trajectory(
         done = int(done)
 
         # get the absolute action
-        action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
+        # action_abs = env.base_env.convert_rel_to_abs_action(actions[t])
 
         # collect transition
         traj["obs"].append(obs)
         traj["rewards"].append(r)
         traj["dones"].append(done)
         traj["datagen_info"].append(datagen_info)
-        traj["actions_abs"].append(action_abs)
+        # traj["actions_abs"].append(action_abs)
 
     # convert list of dict to dict of list for obs dictionaries (for convenient writes to hdf5 dataset)
     traj["obs"] = TensorUtils.list_of_flat_dict_to_dict_of_list(traj["obs"])
@@ -177,7 +199,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
                     ep_data_grp.create_dataset("states", data=np.array(traj["states"]))
                     ep_data_grp.create_dataset("rewards", data=np.array(traj["rewards"]))
                     ep_data_grp.create_dataset("dones", data=np.array(traj["dones"]))
-                    ep_data_grp.create_dataset("actions_abs", data=np.array(traj["actions_abs"]))
+                    # ep_data_grp.create_dataset("actions_abs", data=np.array(traj["actions_abs"]))
                     for k in traj["obs"]:
                         if args.no_compress:
                             ep_data_grp.create_dataset("obs/{}".format(k), data=np.array(traj["obs"][k]))
@@ -202,7 +224,7 @@ def write_traj_to_file(args, output_path, total_samples, total_run, processes, i
                     # episode metadata
                     if is_robosuite_env:
                         ep_data_grp.attrs["model_file"] = traj["initial_state_dict"]["model"] # model xml for this episode
-                        ep_data_grp.attrs["ep_meta"] = traj["initial_state_dict"]["ep_meta"] # ep meta data for this episode
+                        # ep_data_grp.attrs["ep_meta"] = traj["initial_state_dict"]["ep_meta"] # ep meta data for this episode
                     # if "ep_meta" in f["data/{}".format(ep)].attrs:
                     #     ep_data_grp.attrs["ep_meta"] = f["data/{}".format(ep)].attrs["ep_meta"]
                     ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0] # number of transitions in this episode
@@ -346,7 +368,9 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
             initial_state = dict(states=states[0])
             if is_robosuite_env:
                 initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
-                initial_state["ep_meta"] = f["data/{}".format(ep)].attrs.get("ep_meta", None)
+                if args.postprocess_model_xml:
+                    initial_state["model"] = postprocess_model_xml(initial_state["model"])
+                # initial_state["ep_meta"] = f["data/{}".format(ep)].attrs.get("ep_meta", {})
 
             # extract obs, rewards, dones
             actions = f["data/{}/actions".format(ep)][()]
@@ -373,7 +397,7 @@ def extract_multiple_trajectories_with_error(process_num, current_work_array, wo
             initial_state = dict(states=states[0])
             if is_robosuite_env:
                 initial_state["model"] = ep_grp.attrs["model_file"]
-                initial_state["ep_meta"] = ep_grp.attrs.get("ep_meta", None)
+                # initial_state["ep_meta"] = ep_grp.attrs.get("ep_meta", None)
 
             # store transitions
 
@@ -472,6 +496,7 @@ def dataset_states_to_obs_multiprocessing(args):
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn") 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dataset",
@@ -593,6 +618,11 @@ if __name__ == "__main__":
         "--randomize_cameras",
         action="store_true"
 
+    )
+
+    parser.add_argument(
+        "--postprocess_model_xml",
+        action="store_true"
     )
 
     args = parser.parse_args()
