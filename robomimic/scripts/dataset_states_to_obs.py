@@ -57,7 +57,11 @@ from robomimic.envs.env_base import EnvBase
 from robomimic.scripts.conversion.extract_action_dict import extract_action_dict
 from robomimic.scripts.filter_dataset_size import filter_dataset_size
 import xml.etree.ElementTree as ET
+import robosuite.utils.transform_utils as T
 
+
+BASE_POS = np.array([-0.66,   0,     0.912])
+BASE_QUAT = np.array([0, 0, 0, 1])
 """ End of dataset_states_to_args copy over """
 
 def postprocess_model_xml(xml_str):
@@ -79,6 +83,30 @@ def postprocess_model_xml(xml_str):
     robot0_base.append(agentview_cam)
 
     return ET.tostring(root, encoding="unicode")
+
+
+
+def base_to_eef_pos(eef_pos, eef_quat):
+
+    eef_mat = T.quat2mat(eef_quat)
+    base_mat = T.quat2mat(BASE_QUAT)
+
+    T_WA = np.vstack((np.hstack((base_mat, BASE_POS[:, None])), [0, 0, 0, 1]))
+    T_WB = np.vstack((np.hstack((eef_mat, eef_pos[:, None])), [0, 0, 0, 1]))
+    T_AB = np.matmul(np.linalg.inv(T_WA), T_WB)
+    base_to_eef_pos = T_AB[:3, 3]
+    return base_to_eef_pos
+
+def base_to_eef_quat(eef_pos, eef_quat):
+
+    eef_mat = T.quat2mat(eef_quat)
+    base_mat = T.quat2mat(BASE_QUAT)
+
+    T_WA = np.vstack((np.hstack((base_mat, BASE_POS[:, None])), [0, 0, 0, 1]))
+    T_WB = np.vstack((np.hstack((eef_mat, eef_pos[:, None])), [0, 0, 0, 1]))
+    T_AB = np.matmul(np.linalg.inv(T_WA), T_WB)
+    base_to_eef_mat = T_AB[:3, :3]
+    return T.mat2quat(base_to_eef_mat)
 
 def extract_trajectory(
     env, 
@@ -128,6 +156,8 @@ def extract_trajectory(
     # iteration variable @t is over "next obs" indices
     for t in range(traj_len):
         obs = deepcopy(env.reset_to({"states" : states[t]}))
+        obs["robot0_base_to_eef_pos"] = base_to_eef_pos(obs["robot0_eef_pos"], obs["robot0_eef_quat"])
+        obs["robot0_base_to_eef_quat"] = base_to_eef_quat(obs["robot0_eef_pos"], obs["robot0_eef_quat"])
 
         # extract datagen info
         if add_datagen_info:
@@ -488,8 +518,8 @@ def dataset_states_to_obs_multiprocessing(args):
     for process in processes:
         process.start()
     
-    for process in processes:
-        process.join()
+    #only need to wait for the writing process to finish. when it finishes, all the data has been generated
+    process1.join()
 
     print("Finished Multiprocessing")
     return
